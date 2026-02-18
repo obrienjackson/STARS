@@ -11,14 +11,14 @@ import L from "leaflet";
 import type { GeoJsonObject } from "geojson";
 
 const CENTER: [number, number] = [40.6413, -73.7781];
-const TRAFFIC_URL = "http://localhost:3001/api/traffic";
+const TRAFFIC_URL = "/api/traffic";
 
 const TTL_MS = 10_000;
 const MIN_ALT_FT = 100;
 const VECTOR_MINUTES = 1;
 
 // METAR
-const METAR_URL = "http://localhost:3001/api/metar?ids=KJFK";
+const METAR_URL = "/api/metar?ids=KJFK";
 const METAR_POLL_MS = 60_000;
 
 type Aircraft = {
