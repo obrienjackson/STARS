@@ -13,31 +13,28 @@ import type { GeoJsonObject } from "geojson";
 const CENTER: [number, number] = [40.6413, -73.7781];
 const TRAFFIC_URL = "http://localhost:3001/api/traffic";
 
-// Keep targets for this long even if one poll misses them
 const TTL_MS = 10_000;
-
-// Filter: hide aircraft below this altitude (feet MSL)
 const MIN_ALT_FT = 100;
+const VECTOR_MINUTES = 1;
 
-// Velocity vector: how many minutes ahead to draw
-const VECTOR_MINUTES = 1; // 1-minute vector. Try 2 or 3 if you want longer.
+// METAR
+const METAR_URL = "http://localhost:3001/api/metar?ids=KJFK";
+const METAR_POLL_MS = 60_000;
 
 type Aircraft = {
   hex?: string;
   icao?: string;
   flight?: string;
+  t?: string; // aircraft type (E145 etc)
   callsign?: string;
   lat?: number;
   lon?: number;
-  track?: number; // degrees
-  gs?: number; // knots
-
+  track?: number;
+  gs?: number;
   alt_baro?: number | string | null;
   alt_geom?: number | string | null;
   altitude?: number | string | null;
-
   squawk?: string | number | null;
-
   lastSeenMs?: number;
 };
 
@@ -45,11 +42,6 @@ type TrafficResponse = {
   ac?: Aircraft[];
   aircraft?: Aircraft[];
 };
-
-function clampHeading(h?: number) {
-  const n = typeof h === "number" && Number.isFinite(h) ? h : 0;
-  return ((n % 360) + 360) % 360;
-}
 
 function getAltFeet(a: Aircraft): number | null {
   const candidates = [a.alt_baro, a.alt_geom, a.altitude];
@@ -73,28 +65,21 @@ function getCallsign(a: Aircraft): string {
   return cs || "UNK";
 }
 
-function getSquawk(a: Aircraft): string {
-  const s =
-    typeof a.squawk === "number"
-      ? String(a.squawk)
-      : typeof a.squawk === "string"
-      ? a.squawk.trim()
-      : "";
+function getType(a: Aircraft): string {
+  const s = (a.t ?? "").trim().toUpperCase();
   return s || "----";
 }
 
-// Great-circle destination point (meters) from lat/lon, bearing(deg)
 function destinationPoint(
   latDeg: number,
   lonDeg: number,
   bearingDeg: number,
   distanceMeters: number
 ): [number, number] {
-  const R = 6371000; // meters
+  const R = 6371000;
   const brng = (bearingDeg * Math.PI) / 180;
   const lat1 = (latDeg * Math.PI) / 180;
   const lon1 = (lonDeg * Math.PI) / 180;
-
   const dr = distanceMeters / R;
 
   const lat2 = Math.asin(
@@ -113,76 +98,61 @@ function destinationPoint(
 }
 
 function knotsToMeters(knots: number, minutes: number): number {
-  // 1 knot = 1 NM/hr
-  // NM in given minutes = knots * (minutes/60)
   const nm = knots * (minutes / 60);
-  return nm * 1852; // meters
+  return nm * 1852;
 }
 
 function makeStarsTargetIcon(opts: {
   altText: string;
   showTag: boolean;
   callsign: string;
-  squawk: string;
+  type: string;
 }) {
-  const { altText, showTag, callsign, squawk } = opts;
-
+  const { altText, showTag, callsign, type } = opts;
   const dotSize = 10;
-  const leaderLen = 18;
 
-  // Tag to the right, STARS-ish
   const tagHtml = showTag
     ? `
       <div style="
         position: absolute;
-        left: 34px;
-        top: 10px;
+        left: 24px;
+        top: 6px;
         font-size: 12px;
         font-family: monospace;
         color: #00ff00;
         text-shadow: 0 0 3px rgba(0,255,0,0.6);
-        white-space: nowrap;
+        white-space: pre;
         line-height: 12px;
       ">
-        <div>${callsign}</div>
-        <div>${squawk}</div>
+        <pre style="margin:0; padding:0;">${callsign.padEnd(7, " ")}
+${altText} ${type}</pre>
       </div>
     `
     : "";
 
   const html = `
-    <div style="position: relative; width: 140px; height: ${
-      leaderLen + dotSize + 16
-    }px;">
-      <!-- Altitude text -->
-      <div style="
-        position: absolute;
-        left: 0px;
-        top: 0px;
-        font-size: 12px;
-        font-family: monospace;
-        color: #00ff00;
-        text-shadow: 0 0 3px rgba(0,255,0,0.6);
-      ">${altText}</div>
+    <div style="position: relative; width: 180px; height: 40px;">
+      ${
+        showTag
+          ? ""
+          : `<div style="
+              position: absolute;
+              left: 0px;
+              top: 0px;
+              font-size: 12px;
+              font-family: monospace;
+              color: #00ff00;
+              text-shadow: 0 0 3px rgba(0,255,0,0.6);
+            ">${altText}</div>`
+      }
 
       ${tagHtml}
-
-      <!-- Leader line (white) -->
-      <div style="
-        position: absolute;
-        left: 18px;
-        top: 12px;
-        width: 2px;
-        height: ${leaderLen}px;
-        background: #ffffff;
-        opacity: 0.95;
-      "></div>
 
       <!-- Blue dot + green X -->
       <div style="
         position: absolute;
-        left: ${18 - dotSize / 2}px;
-        top: ${12 + leaderLen}px;
+        left: 18px;
+        top: 18px;
         width: ${dotSize}px;
         height: ${dotSize}px;
         background: #1e55ff;
@@ -208,9 +178,65 @@ function makeStarsTargetIcon(opts: {
   return L.divIcon({
     className: "",
     html,
-    iconSize: [140, leaderLen + dotSize + 16],
-    iconAnchor: [18, 12 + leaderLen + dotSize / 2], // anchor at dot center
+    iconSize: [180, 40],
+    iconAnchor: [23, 23],
   });
+}
+
+function MetarBox() {
+  const [metar, setMetar] = useState<string>("Loading METAR…");
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    const fetchMetar = async () => {
+      try {
+        setErr(null);
+        const r = await fetch(METAR_URL, { cache: "no-store" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+
+        // aviationweather.gov endpoint returns plain text by default
+        const text = (await r.text()).trim();
+
+        if (!alive) return;
+        setMetar(text || "No METAR returned.");
+      } catch (e) {
+        if (!alive) return;
+        setErr(String(e));
+      }
+    };
+
+    fetchMetar();
+    const id = window.setInterval(fetchMetar, METAR_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 12,
+        top: 12,
+        zIndex: 9999,
+        pointerEvents: "none",
+        fontFamily: "monospace",
+        fontSize: 12,
+        color: "#00ff00",
+        textShadow: "0 0 3px rgba(0,255,0,0.6)",
+        background: "rgba(0,0,0,0.35)",
+        border: "1px solid rgba(0,255,0,0.25)",
+        padding: "8px 10px",
+        whiteSpace: "pre-wrap",
+        maxWidth: 520,
+      }}
+    >
+      {err ? `METAR error: ${err}` : metar}
+    </div>
+  );
 }
 
 export default function ScopeMap() {
@@ -220,7 +246,6 @@ export default function ScopeMap() {
 
   const intervalRef = useRef<number | null>(null);
 
-  // Load sector overlay
   useEffect(() => {
     fetch("/ROBER.geojson")
       .then((r) => r.json())
@@ -228,7 +253,6 @@ export default function ScopeMap() {
       .catch(console.error);
   }, []);
 
-  // F1 toggles tags
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "F1") {
@@ -240,19 +264,17 @@ export default function ScopeMap() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  // Cache icons; when tags toggle, icon contents change, so include showTags in cache key
   const iconCache = useMemo(() => new Map<string, L.DivIcon>(), []);
   useEffect(() => {
-    // optional: clear cache when toggling so icons update instantly
     iconCache.clear();
   }, [showTags, iconCache]);
 
   const getTargetIcon = (a: Aircraft) => {
     const altText = altToStars(a);
     const callsign = getCallsign(a);
-    const squawk = getSquawk(a);
+    const type = getType(a);
 
-    const cacheKey = `${altText}|${showTags ? "T" : "F"}|${callsign}|${squawk}`;
+    const cacheKey = `${altText}|${showTags}|${callsign}|${type}`;
     const cached = iconCache.get(cacheKey);
     if (cached) return cached;
 
@@ -260,13 +282,13 @@ export default function ScopeMap() {
       altText,
       showTag: showTags,
       callsign,
-      squawk,
+      type,
     });
+
     iconCache.set(cacheKey, icon);
     return icon;
   };
 
-  // Poll traffic
   useEffect(() => {
     let alive = true;
 
@@ -279,10 +301,8 @@ export default function ScopeMap() {
         const list = (json.ac ?? json.aircraft ?? []).filter((a) => {
           if (typeof a.lat !== "number" || typeof a.lon !== "number")
             return false;
-
           const alt = getAltFeet(a);
           if (alt === null) return false;
-
           return alt >= MIN_ALT_FT;
         });
 
@@ -329,7 +349,6 @@ export default function ScopeMap() {
     [aircraftMap]
   );
 
-  // Range rings every 5 miles up to 200
   const rangeRingsMiles = useMemo(() => {
     const rings: number[] = [];
     for (let m = 5; m <= 200; m += 5) rings.push(m);
@@ -337,21 +356,21 @@ export default function ScopeMap() {
   }, []);
 
   return (
-    <div style={{ height: "100vh", width: "100vw" }}>
+    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
+      <MetarBox />
+
       <MapContainer
         center={CENTER}
         zoom={10}
         attributionControl={false}
         style={{ height: "100%", width: "100%" }}
-        worldCopyJump={false}
       >
-        {/* Range rings pane (below sectors) */}
         <Pane name="rings" style={{ zIndex: 120 }}>
           {rangeRingsMiles.map((miles) => (
             <Circle
               key={miles}
               center={CENTER}
-              radius={miles * 1609.344} // miles -> meters
+              radius={miles * 1609.344}
               pathOptions={{
                 color: "#6f6f6f",
                 weight: 1,
@@ -363,7 +382,6 @@ export default function ScopeMap() {
           ))}
         </Pane>
 
-        {/* Sector grid pane */}
         <Pane name="sectors" style={{ zIndex: 200 }}>
           {geoData && (
             <GeoJSON
@@ -378,12 +396,10 @@ export default function ScopeMap() {
           )}
         </Pane>
 
-        {/* Traffic + vectors pane (on top) */}
         <Pane name="traffic" style={{ zIndex: 650 }}>
           {aircraftList.map(([key, a]) => {
             const pos: [number, number] = [a.lat as number, a.lon as number];
 
-            // Velocity vector
             const hasVector =
               typeof a.gs === "number" &&
               Number.isFinite(a.gs) &&
@@ -400,7 +416,6 @@ export default function ScopeMap() {
 
             return (
               <div key={key}>
-                {/* Vector line */}
                 {vectorLine && (
                   <Polyline
                     positions={vectorLine}
@@ -410,17 +425,13 @@ export default function ScopeMap() {
                       opacity: 0.9,
                     }}
                     interactive={false}
-                    pane="traffic"
                   />
                 )}
 
-                {/* Target symbol + optional tag (F1) */}
                 <Marker
                   position={pos}
                   icon={getTargetIcon(a)}
-                  pane="traffic"
                   interactive={false}
-                  keyboard={false}
                 />
               </div>
             );
