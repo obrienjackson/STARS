@@ -242,7 +242,7 @@ function MetarBox() {
 export default function ScopeMap() {
   const [geoData, setGeoData] = useState<GeoJsonObject | null>(null);
   const [aircraftMap, setAircraftMap] = useState<Record<string, Aircraft>>({});
-  const [showTags, setShowTags] = useState(false);
+  const [showTags, setShowTags] = useState(true);
 
   const intervalRef = useRef<number | null>(null);
 
