@@ -1,5 +1,5 @@
-import SimpleMap from "./components/map";
+import Map from "./components/Map";
 
 export default function App() {
-  return <SimpleMap />;
+  return <Map />;
 }
