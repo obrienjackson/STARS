@@ -49,6 +49,7 @@ const FACILITIES: Record<
 const TTL_MS = 10_000
 const MIN_ALT_FT = 100
 const VECTOR_MINUTES = 1
+const HISTORY_LENGTH = 5
 
 // METAR
 const METAR_POLL_MS = 60_000
@@ -68,6 +69,7 @@ type Aircraft = {
   altitude?: number | string | null
   squawk?: string | number | null
   lastSeenMs?: number
+  history?: [number, number][]
 }
 
 type TrafficResponse = {
@@ -455,7 +457,21 @@ export default function ScopeMap (props: {
               a.hex ?? a.icao ?? (a.flight?.trim() || '') ?? `${a.lat},${a.lon}`
             if (!key) continue
 
-            next[key] = { ...next[key], ...a, lastSeenMs: now }
+            const prevAircraft = next[key]
+            let newHistory: [number, number][] = prevAircraft?.history ?? []
+            if (prevAircraft?.lat && prevAircraft?.lon) {
+              newHistory = [
+                [prevAircraft.lat, prevAircraft.lon] as [number, number],
+                ...newHistory
+              ].slice(0, HISTORY_LENGTH)
+            }
+
+            next[key] = {
+              ...prevAircraft,
+              ...a,
+              lastSeenMs: now,
+              history: newHistory
+            }
           }
 
           for (const k of Object.keys(next)) {
@@ -579,6 +595,22 @@ export default function ScopeMap (props: {
                     pane='traffic'
                   />
                 )}
+
+                {/* History trail */}
+                {a.history?.map((histPos, i) => (
+                  <Circle
+                    key={i}
+                    center={histPos}
+                    radius={45} // Adjust size as needed
+                    pathOptions={{
+                      color: '#1e55ff', // Blue color
+                      fillColor: '#1e55ff',
+                      fillOpacity: 0.7 - i * 0.14,
+                      weight: 0
+                    }}
+                    interactive={false}
+                  />
+                ))}
 
                 {/* Target symbol + optional tag (F1) */}
                 <Marker
