@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   MapContainer,
   GeoJSON,
@@ -6,110 +6,148 @@ import {
   Pane,
   Circle,
   Polyline,
-} from "react-leaflet";
-import L from "leaflet";
-import type { GeoJsonObject } from "geojson";
+  useMap
+} from 'react-leaflet'
+import L from 'leaflet'
+import type { GeoJsonObject } from 'geojson'
 
-const CENTER: [number, number] = [40.6413, -73.7781];
-const TRAFFIC_URL = "/api/traffic";
+export type FacilityKey = 'JFK' | 'LGA' | 'EWR'
 
-const TTL_MS = 10_000;
-const MIN_ALT_FT = 100;
-const VECTOR_MINUTES = 1;
+const FACILITIES: Record<
+  FacilityKey,
+  {
+    label: string
+    center: [number, number]
+    zoom: number
+    metarId: string
+    geojsonUrl: string
+  }
+> = {
+  JFK: {
+    label: 'JFK',
+    center: [40.6413, -73.7781],
+    zoom: 10,
+    metarId: 'KJFK',
+    geojsonUrl: '/ROBER.geojson'
+  },
+  LGA: {
+    label: 'LGA',
+    center: [40.7769, -73.874],
+    zoom: 11,
+    metarId: 'KLGA',
+    geojsonUrl: '/HARRP.geojson'
+  },
+  EWR: {
+    label: 'EWR',
+    center: [40.6895, -74.1745],
+    zoom: 10,
+    metarId: 'KEWR',
+    geojsonUrl: '/EWR_N90.geojson'
+  }
+}
+
+const TRAFFIC_URL = '/api/traffic'
+
+const TTL_MS = 10_000
+const MIN_ALT_FT = 100
+const VECTOR_MINUTES = 1
 
 // METAR
-const METAR_URL = "/api/metar?ids=KJFK";
-const METAR_POLL_MS = 60_000;
+const METAR_POLL_MS = 60_000
 
 type Aircraft = {
-  hex?: string;
-  icao?: string;
-  flight?: string;
-  t?: string; // aircraft type (E145 etc)
-  callsign?: string;
-  lat?: number;
-  lon?: number;
-  track?: number;
-  gs?: number;
-  alt_baro?: number | string | null;
-  alt_geom?: number | string | null;
-  altitude?: number | string | null;
-  squawk?: string | number | null;
-  lastSeenMs?: number;
-};
+  hex?: string
+  icao?: string
+  flight?: string
+  t?: string // aircraft type (E145 etc)
+  callsign?: string
+  lat?: number
+  lon?: number
+  track?: number
+  gs?: number
+  alt_baro?: number | string | null
+  alt_geom?: number | string | null
+  altitude?: number | string | null
+  squawk?: string | number | null
+  lastSeenMs?: number
+}
 
 type TrafficResponse = {
-  ac?: Aircraft[];
-  aircraft?: Aircraft[];
-};
+  ac?: Aircraft[]
+  aircraft?: Aircraft[]
+}
 
-function getAltFeet(a: Aircraft): number | null {
-  const candidates = [a.alt_baro, a.alt_geom, a.altitude];
+function getAltFeet (a: Aircraft): number | null {
+  const candidates = [a.alt_baro, a.alt_geom, a.altitude]
   for (const v of candidates) {
     const n =
-      typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-    if (Number.isFinite(n)) return n;
+      typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN
+    if (Number.isFinite(n)) return n
   }
-  return null;
+  return null
 }
 
-function altToStars(a: Aircraft): string {
-  const alt = getAltFeet(a);
-  if (alt === null) return "---";
-  const hundreds = Math.round(alt / 100);
-  return String(Math.max(0, Math.min(999, hundreds))).padStart(3, "0");
+function altToStars (a: Aircraft): string {
+  const alt = getAltFeet(a)
+  if (alt === null) return '---'
+  const hundreds = Math.round(alt / 100)
+  return String(Math.max(0, Math.min(999, hundreds))).padStart(3, '0')
 }
 
-function getCallsign(a: Aircraft): string {
-  const cs = (a.flight ?? a.callsign ?? "").trim();
-  return cs || "UNK";
+function getCallsign (a: Aircraft): string {
+  const cs = (a.flight ?? a.callsign ?? '').trim()
+  return cs || 'UNK'
 }
 
-function getType(a: Aircraft): string {
-  const s = (a.t ?? "").trim().toUpperCase();
-  return s || "----";
+function getType (a: Aircraft): string {
+  const s = (a.t ?? '').trim().toUpperCase()
+  return s || '----'
 }
 
-function destinationPoint(
+// Great-circle destination point (meters) from lat/lon, bearing(deg)
+function destinationPoint (
   latDeg: number,
   lonDeg: number,
   bearingDeg: number,
   distanceMeters: number
 ): [number, number] {
-  const R = 6371000;
-  const brng = (bearingDeg * Math.PI) / 180;
-  const lat1 = (latDeg * Math.PI) / 180;
-  const lon1 = (lonDeg * Math.PI) / 180;
-  const dr = distanceMeters / R;
+  const R = 6371000 // meters
+  const brng = (bearingDeg * Math.PI) / 180
+  const lat1 = (latDeg * Math.PI) / 180
+  const lon1 = (lonDeg * Math.PI) / 180
+
+  const dr = distanceMeters / R
 
   const lat2 = Math.asin(
     Math.sin(lat1) * Math.cos(dr) +
       Math.cos(lat1) * Math.sin(dr) * Math.cos(brng)
-  );
+  )
 
   const lon2 =
     lon1 +
     Math.atan2(
       Math.sin(brng) * Math.sin(dr) * Math.cos(lat1),
       Math.cos(dr) - Math.sin(lat1) * Math.sin(lat2)
-    );
+    )
 
-  return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
+  return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI]
 }
 
-function knotsToMeters(knots: number, minutes: number): number {
-  const nm = knots * (minutes / 60);
-  return nm * 1852;
+function knotsToMeters (knots: number, minutes: number): number {
+  // 1 knot = 1 NM/hr
+  // NM in given minutes = knots * (minutes/60)
+  const nm = knots * (minutes / 60)
+  return nm * 1852 // meters
 }
 
-function makeStarsTargetIcon(opts: {
-  altText: string;
-  showTag: boolean;
-  callsign: string;
-  type: string;
+function makeStarsTargetIcon (opts: {
+  altText: string
+  showTag: boolean
+  callsign: string
+  type: string
 }) {
-  const { altText, showTag, callsign, type } = opts;
-  const dotSize = 10;
+  const { altText, showTag, callsign, type } = opts
+  const dotSize = 10
 
   const tagHtml = showTag
     ? `
@@ -124,17 +162,17 @@ function makeStarsTargetIcon(opts: {
         white-space: pre;
         line-height: 12px;
       ">
-        <pre style="margin:0; padding:0;">${callsign.padEnd(7, " ")}
+        <pre style="margin:0; padding:0;">${callsign.padEnd(7, ' ')}
 ${altText} ${type}</pre>
       </div>
     `
-    : "";
+    : ''
 
   const html = `
     <div style="position: relative; width: 180px; height: 40px;">
       ${
         showTag
-          ? ""
+          ? ''
           : `<div style="
               position: absolute;
               left: 0px;
@@ -173,271 +211,377 @@ ${altText} ${type}</pre>
         </div>
       </div>
     </div>
-  `;
+  `
 
   return L.divIcon({
-    className: "",
+    className: '',
     html,
     iconSize: [180, 40],
-    iconAnchor: [23, 23],
-  });
+    iconAnchor: [23, 23]
+  })
 }
 
-function MetarBox() {
-  const [metar, setMetar] = useState<string>("Loading METAR…");
-  const [err, setErr] = useState<string | null>(null);
+function FacilitySwitcher (props: {
+  facility: FacilityKey
+  setFacility: (f: FacilityKey) => void
+}) {
+  const { facility, setFacility } = props
 
-  useEffect(() => {
-    let alive = true;
-
-    const fetchMetar = async () => {
-      try {
-        setErr(null);
-        const r = await fetch(METAR_URL, { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-
-        // aviationweather.gov endpoint returns plain text by default
-        const text = (await r.text()).trim();
-
-        if (!alive) return;
-        setMetar(text || "No METAR returned.");
-      } catch (e) {
-        if (!alive) return;
-        setErr(String(e));
-      }
-    };
-
-    fetchMetar();
-    const id = window.setInterval(fetchMetar, METAR_POLL_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, []);
+  const btn = (key: FacilityKey) => (
+    <button
+      key={key}
+      onClick={() => setFacility(key)}
+      style={{
+        fontFamily: 'monospace',
+        fontSize: 12,
+        color: '#00ff00',
+        textShadow: '0 0 3px rgba(0,255,0,0.6)',
+        background:
+          facility === key ? 'rgba(0,255,0,0.12)' : 'rgba(0,0,0,0.25)',
+        border: '1px solid rgba(0,255,0,0.25)',
+        padding: '6px 10px',
+        cursor: 'pointer'
+      }}
+    >
+      {key}
+    </button>
+  )
 
   return (
     <div
       style={{
-        position: "absolute",
+        position: 'absolute',
+        right: 12,
+        top: 12,
+        zIndex: 10000,
+        pointerEvents: 'auto',
+        display: 'flex',
+        gap: 8
+      }}
+    >
+      {btn('JFK')}
+      {btn('LGA')}
+      {btn('EWR')}
+    </div>
+  )
+}
+
+function MetarBox ({ metarId }: { metarId: string }) {
+  const [metar, setMetar] = useState<string>('Loading METAR…')
+  const [err, setErr] = useState<string | null>(null)
+
+  const metarUrl = useMemo(
+    () => `/api/metar?ids=${encodeURIComponent(metarId)}`,
+    [metarId]
+  )
+
+  useEffect(() => {
+    let alive = true
+
+    const fetchMetar = async () => {
+      try {
+        setErr(null)
+        const r = await fetch(metarUrl, { cache: 'no-store' })
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const text = (await r.text()).trim()
+
+        if (!alive) return
+        setMetar(text || 'No METAR returned.')
+      } catch (e) {
+        if (!alive) return
+        setErr(String(e))
+      }
+    }
+
+    fetchMetar()
+    const id = window.setInterval(fetchMetar, METAR_POLL_MS)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
+  }, [metarUrl])
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
         left: 12,
         top: 12,
         zIndex: 9999,
-        pointerEvents: "none",
-        fontFamily: "monospace",
+        pointerEvents: 'none',
+        fontFamily: 'monospace',
         fontSize: 12,
-        color: "#00ff00",
-        textShadow: "0 0 3px rgba(0,255,0,0.6)",
-        background: "rgba(0,0,0,0.35)",
-        border: "1px solid rgba(0,255,0,0.25)",
-        padding: "8px 10px",
-        whiteSpace: "pre-wrap",
-        maxWidth: 520,
+        color: '#00ff00',
+        textShadow: '0 0 3px rgba(0,255,0,0.6)',
+        background: 'rgba(0,0,0,0.35)',
+        border: '1px solid rgba(0,255,0,0.25)',
+        padding: '8px 10px',
+        whiteSpace: 'pre-wrap',
+        maxWidth: 520
       }}
     >
       {err ? `METAR error: ${err}` : metar}
     </div>
-  );
+  )
 }
 
-export default function ScopeMap() {
-  const [geoData, setGeoData] = useState<GeoJsonObject | null>(null);
-  const [aircraftMap, setAircraftMap] = useState<Record<string, Aircraft>>({});
-  const [showTags, setShowTags] = useState(true);
-
-  const intervalRef = useRef<number | null>(null);
-
+function RecenterMap ({
+  center,
+  zoom
+}: {
+  center: [number, number]
+  zoom: number
+}) {
+  const map = useMap()
   useEffect(() => {
-    fetch("/ROBER.geojson")
-      .then((r) => r.json())
-      .then(setGeoData)
-      .catch(console.error);
-  }, []);
+    map.setView(center, zoom, { animate: false })
+  }, [center, zoom, map])
+  return null
+}
 
+export default function ScopeMap (props: {
+  facility: FacilityKey
+  setFacility: (f: FacilityKey) => void
+}) {
+  const { facility, setFacility } = props
+  const f = FACILITIES[facility]
+
+  const [geoData, setGeoData] = useState<GeoJsonObject | null>(null)
+  const [aircraftMap, setAircraftMap] = useState<Record<string, Aircraft>>({})
+  const [showTags, setShowTags] = useState(true)
+
+  const intervalRef = useRef<number | null>(null)
+
+  // ✅ Load sector overlay for current facility (clear old, refetch, force remount)
+  useEffect(() => {
+    let alive = true
+
+    // clear immediately so you can see it switch
+    setGeoData(null)
+
+    const bust = `?v=${encodeURIComponent(facility)}_${Date.now()}`
+    const url = f.geojsonUrl + bust
+
+    fetch(url, { cache: 'no-store' })
+      .then(r => {
+        if (!r.ok)
+          throw new Error(`GeoJSON HTTP ${r.status} for ${f.geojsonUrl}`)
+        return r.json()
+      })
+      .then(json => {
+        if (!alive) return
+        setGeoData(json as GeoJsonObject)
+      })
+      .catch(e => {
+        console.error(e)
+        if (!alive) return
+        setGeoData(null)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [facility, f.geojsonUrl])
+
+  // F1 toggles tags (starts ON)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "F1") {
-        e.preventDefault();
-        setShowTags((v) => !v);
+      if (e.key === 'F1') {
+        e.preventDefault()
+        setShowTags(v => !v)
       }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
-  const iconCache = useMemo(() => new Map<string, L.DivIcon>(), []);
+  // Cache icons; when tags toggle, icon contents change, so clear cache
+  const iconCache = useMemo(() => new Map<string, L.DivIcon>(), [])
   useEffect(() => {
-    iconCache.clear();
-  }, [showTags, iconCache]);
+    iconCache.clear()
+  }, [showTags, iconCache])
 
   const getTargetIcon = (a: Aircraft) => {
-    const altText = altToStars(a);
-    const callsign = getCallsign(a);
-    const type = getType(a);
+    const altText = altToStars(a)
+    const callsign = getCallsign(a)
+    const type = getType(a)
 
-    const cacheKey = `${altText}|${showTags}|${callsign}|${type}`;
-    const cached = iconCache.get(cacheKey);
-    if (cached) return cached;
+    const cacheKey = `${altText}|${showTags ? 'T' : 'F'}|${callsign}|${type}`
+    const cached = iconCache.get(cacheKey)
+    if (cached) return cached
 
     const icon = makeStarsTargetIcon({
       altText,
       showTag: showTags,
       callsign,
-      type,
-    });
+      type
+    })
 
-    iconCache.set(cacheKey, icon);
-    return icon;
-  };
+    iconCache.set(cacheKey, icon)
+    return icon
+  }
 
+  // Poll traffic
   useEffect(() => {
-    let alive = true;
+    let alive = true
 
     const tick = async () => {
       try {
-        const r = await fetch(TRAFFIC_URL, { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const json = (await r.json()) as TrafficResponse;
+        const r = await fetch(TRAFFIC_URL, { cache: 'no-store' })
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        const json = (await r.json()) as TrafficResponse
 
-        const list = (json.ac ?? json.aircraft ?? []).filter((a) => {
-          if (typeof a.lat !== "number" || typeof a.lon !== "number")
-            return false;
-          const alt = getAltFeet(a);
-          if (alt === null) return false;
-          return alt >= MIN_ALT_FT;
-        });
+        const list = (json.ac ?? json.aircraft ?? []).filter(a => {
+          if (typeof a.lat !== 'number' || typeof a.lon !== 'number')
+            return false
 
-        if (!alive) return;
+          const alt = getAltFeet(a)
+          if (alt === null) return false
 
-        setAircraftMap((prev) => {
-          const now = Date.now();
-          const next: Record<string, Aircraft> = { ...prev };
+          return alt >= MIN_ALT_FT
+        })
+
+        if (!alive) return
+
+        setAircraftMap(prev => {
+          const now = Date.now()
+          const next: Record<string, Aircraft> = { ...prev }
 
           for (const a of list) {
             const key =
-              a.hex ??
-              a.icao ??
-              (a.flight?.trim() || "") ??
-              `${a.lat},${a.lon}`;
-            if (!key) continue;
+              a.hex ?? a.icao ?? (a.flight?.trim() || '') ?? `${a.lat},${a.lon}`
+            if (!key) continue
 
-            next[key] = { ...next[key], ...a, lastSeenMs: now };
+            next[key] = { ...next[key], ...a, lastSeenMs: now }
           }
 
           for (const k of Object.keys(next)) {
-            const last = next[k].lastSeenMs ?? 0;
-            if (now - last > TTL_MS) delete next[k];
+            const last = next[k].lastSeenMs ?? 0
+            if (now - last > TTL_MS) delete next[k]
           }
 
-          return next;
-        });
+          return next
+        })
       } catch (err) {
-        console.error("Traffic fetch failed:", err);
+        console.error('Traffic fetch failed:', err)
       }
-    };
+    }
 
-    tick();
-    intervalRef.current = window.setInterval(tick, 1000);
+    tick()
+    intervalRef.current = window.setInterval(tick, 1000)
 
     return () => {
-      alive = false;
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
+      alive = false
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [])
 
-  const aircraftList = useMemo(
-    () => Object.entries(aircraftMap),
-    [aircraftMap]
-  );
+  const aircraftList = useMemo(() => Object.entries(aircraftMap), [aircraftMap])
 
+  // Range rings every 5 miles up to 200
   const rangeRingsMiles = useMemo(() => {
-    const rings: number[] = [];
-    for (let m = 5; m <= 200; m += 5) rings.push(m);
-    return rings;
-  }, []);
+    const rings: number[] = []
+    for (let m = 5; m <= 200; m += 5) rings.push(m)
+    return rings
+  }, [])
 
   return (
-    <div style={{ height: "100vh", width: "100vw", position: "relative" }}>
-      <MetarBox />
+    <div style={{ height: '100vh', width: '100vw', position: 'relative' }}>
+      <MetarBox metarId={f.metarId} />
+      <FacilitySwitcher facility={facility} setFacility={setFacility} />
 
       <MapContainer
-        center={CENTER}
-        zoom={10}
+        center={f.center}
+        zoom={f.zoom}
         attributionControl={false}
-        style={{ height: "100%", width: "100%" }}
+        style={{ height: '100%', width: '100%' }}
+        worldCopyJump={false}
       >
-        <Pane name="rings" style={{ zIndex: 120 }}>
-          {rangeRingsMiles.map((miles) => (
+        <RecenterMap center={f.center} zoom={f.zoom} />
+
+        {/* Range rings pane (below sectors) */}
+        <Pane name='rings' style={{ zIndex: 120 }}>
+          {rangeRingsMiles.map(miles => (
             <Circle
               key={miles}
-              center={CENTER}
-              radius={miles * 1609.344}
+              center={f.center}
+              radius={miles * 1609.344} // miles -> meters
               pathOptions={{
-                color: "#6f6f6f",
+                color: '#6f6f6f',
                 weight: 1,
                 opacity: 0.6,
-                fillOpacity: 0,
+                fillOpacity: 0
               }}
               interactive={false}
             />
           ))}
         </Pane>
 
-        <Pane name="sectors" style={{ zIndex: 200 }}>
+        {/* Sector grid pane */}
+        <Pane name='sectors' style={{ zIndex: 200 }}>
           {geoData && (
             <GeoJSON
+              key={facility} // ✅ FORCE REMOUNT so Leaflet replaces the layer
               data={geoData}
               style={{
-                color: "#6f6f6f",
+                color: '#6f6f6f',
                 weight: 2,
                 opacity: 1,
-                fillOpacity: 0,
+                fillOpacity: 0
               }}
             />
           )}
         </Pane>
 
-        <Pane name="traffic" style={{ zIndex: 650 }}>
+        {/* Traffic + vectors pane (on top) */}
+        <Pane name='traffic' style={{ zIndex: 650 }}>
           {aircraftList.map(([key, a]) => {
-            const pos: [number, number] = [a.lat as number, a.lon as number];
+            const pos: [number, number] = [a.lat as number, a.lon as number]
 
+            // Velocity vector
             const hasVector =
-              typeof a.gs === "number" &&
+              typeof a.gs === 'number' &&
               Number.isFinite(a.gs) &&
               a.gs > 0 &&
-              typeof a.track === "number" &&
-              Number.isFinite(a.track);
+              typeof a.track === 'number' &&
+              Number.isFinite(a.track)
 
-            let vectorLine: [number, number][] | null = null;
+            let vectorLine: [number, number][] | null = null
             if (hasVector) {
-              const distM = knotsToMeters(a.gs!, VECTOR_MINUTES);
-              const end = destinationPoint(pos[0], pos[1], a.track!, distM);
-              vectorLine = [pos, end];
+              const distM = knotsToMeters(a.gs!, VECTOR_MINUTES)
+              const end = destinationPoint(pos[0], pos[1], a.track!, distM)
+              vectorLine = [pos, end]
             }
 
             return (
               <div key={key}>
+                {/* Vector line */}
                 {vectorLine && (
                   <Polyline
                     positions={vectorLine}
                     pathOptions={{
-                      color: "#ffffff",
+                      color: '#ffffff',
                       weight: 2,
-                      opacity: 0.9,
+                      opacity: 0.9
                     }}
                     interactive={false}
+                    pane='traffic'
                   />
                 )}
 
+                {/* Target symbol + optional tag (F1) */}
                 <Marker
                   position={pos}
                   icon={getTargetIcon(a)}
+                  pane='traffic'
                   interactive={false}
+                  keyboard={false}
                 />
               </div>
-            );
+            )
           })}
         </Pane>
       </MapContainer>
     </div>
-  );
+  )
 }
