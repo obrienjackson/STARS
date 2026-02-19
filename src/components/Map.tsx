@@ -457,21 +457,17 @@ export default function ScopeMap (props: {
               a.hex ?? a.icao ?? (a.flight?.trim() || '') ?? `${a.lat},${a.lon}`
             if (!key) continue
 
-            const prevAircraft = next[key]
-            let newHistory: [number, number][] = prevAircraft?.history ?? []
-            if (prevAircraft?.lat && prevAircraft?.lon) {
-              newHistory = [
-                [prevAircraft.lat, prevAircraft.lon] as [number, number],
-                ...newHistory
-              ].slice(0, HISTORY_LENGTH)
-            }
+            const prev = next[key]
+            const history = prev?.history ?? []
+            const newHistory: [number, number][] = [
+              // Newest position comes from PREVIOUS state
+              ...(prev?.lat && prev?.lon
+                ? ([[prev.lat, prev.lon]] as [number, number][])
+                : []),
+              ...history
+            ].slice(0, HISTORY_LENGTH)
 
-            next[key] = {
-              ...prevAircraft,
-              ...a,
-              lastSeenMs: now,
-              history: newHistory
-            }
+            next[key] = { ...prev, ...a, lastSeenMs: now, history: newHistory }
           }
 
           for (const k of Object.keys(next)) {
