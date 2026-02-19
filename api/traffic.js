@@ -2,7 +2,7 @@ export default async function handler(req, res) {
   try {
     const lat = Number(req.query.lat ?? 40.6413);
     const lon = Number(req.query.lon ?? -73.7781);
-    const dist = Number(req.query.dist ?? 100);
+    const dist = Number(req.query.dist ?? 50);
 
     const url = `https://opendata.adsb.fi/api/v3/lat/${lat}/lon/${lon}/dist/${dist}`;
 
