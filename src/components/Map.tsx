@@ -597,7 +597,7 @@ export default function ScopeMap (props: {
                   <Circle
                     key={i}
                     center={histPos}
-                    radius={45} // Adjust size as needed
+                    radius={150} // Adjust size as needed
                     pathOptions={{
                       color: '#1e55ff', // Blue color
                       fillColor: '#1e55ff',
