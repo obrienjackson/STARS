@@ -532,7 +532,7 @@ export default function ScopeMap (props: {
                 opacity: 1,
                 fillOpacity: 0
               }}
-              pointToLayer={(feature, latlng) => {
+              pointToLayer={(_feature, latlng) => {
                 if (facility === 'LGA' || facility === 'EWR') {
                   // Don't create a visible marker for points for LGA and EWR
                   return L.marker(latlng, { opacity: 0, interactive: false })
