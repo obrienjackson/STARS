@@ -46,8 +46,6 @@ const FACILITIES: Record<
   }
 }
 
-const TRAFFIC_URL = '/api/traffic'
-
 const TTL_MS = 10_000
 const MIN_ALT_FT = 100
 const VECTOR_MINUTES = 1
@@ -346,6 +344,11 @@ export default function ScopeMap (props: {
   const { facility, setFacility } = props
   const f = FACILITIES[facility]
 
+  const TRAFFIC_URL = useMemo(
+    () => `/api/traffic?lat=${f.center[0]}&lon=${f.center[1]}&dist=120`,
+    [f.center]
+  )
+
   const [geoData, setGeoData] = useState<GeoJsonObject | null>(null)
   const [aircraftMap, setAircraftMap] = useState<Record<string, Aircraft>>({})
   const [showTags, setShowTags] = useState(true)
@@ -474,7 +477,7 @@ export default function ScopeMap (props: {
       alive = false
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [])
+  }, [TRAFFIC_URL])
 
   const aircraftList = useMemo(() => Object.entries(aircraftMap), [aircraftMap])
 

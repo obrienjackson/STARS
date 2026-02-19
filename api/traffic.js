@@ -1,11 +1,13 @@
-export default async function handler(_req, res) {
+export default async function handler(req, res) {
   try {
-    const JFK = { lat: 40.6413, lon: -73.7781 };
-    const DIST_NM = 44;
+    const lat = Number(req.query.lat ?? 40.6413);
+    const lon = Number(req.query.lon ?? -73.7781);
+    const dist = Number(req.query.dist ?? 100);
 
-    const url = `https://opendata.adsb.fi/api/v3/lat/${JFK.lat}/lon/${JFK.lon}/dist/${DIST_NM}`;
+    const url = `https://opendata.adsb.fi/api/v3/lat/${lat}/lon/${lon}/dist/${dist}`;
+
     const r = await fetch(url, {
-      headers: { "User-Agent": "jfk-adsb-scope (personal use)" },
+      headers: { "User-Agent": "stars-scope (personal use)" },
     });
 
     if (!r.ok) {
@@ -14,7 +16,6 @@ export default async function handler(_req, res) {
 
     const data = await r.json();
 
-    // tiny CDN cache to reduce rate-limit pain
     res.setHeader("Cache-Control", "s-maxage=1, stale-while-revalidate=10");
     return res.status(200).json(data);
   } catch (e) {
